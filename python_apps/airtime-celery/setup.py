@@ -21,6 +21,8 @@ def get_data_files():
     If the ``--no-install-script`` argument is provided, the function returns an
     empty list and drops the argument from ``sys.argv``.
     """
+    # Note: These files should be part of the LIbretime packaging,
+    # not of this Python package!
     is_installation = sys.argv[1] in ["install", "install_data", "develop"]
     install_init_scripts = "--no-init-script" not in sys.argv
 
@@ -44,7 +46,7 @@ def post_install():
     os.chmod("/etc/init.d/airtime-celery", 0o755)
     os.chmod("/etc/default/airtime-celery", 0o640)
     print("---------------------")
-    print("Run 'sudo service airtime-celery restart' now.")
+    print("Run \"sudo service airtime-celery restart\" now.")
     print("---------------------")
 
 
@@ -62,6 +64,7 @@ if __name__ == "__main__":
         packages=["airtime-celery"],
         install_requires=[
             "soundcloud",
+            "mutagen>=1.41.1",
             "celery < 4",
             "kombu < 3.1",
             "configobj"
