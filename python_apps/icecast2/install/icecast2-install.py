@@ -1,22 +1,40 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 
-import shutil
 import os
+import shutil
 import sys
 
-if os.geteuid() != 0:
-    print "Please run this as root."
-    sys.exit(1)
+from functools import partial
+from pathlib import Path
 
-def get_current_script_dir():
-  current_script_dir = os.path.realpath(__file__)
-  index = current_script_dir.rindex('/')
-  return current_script_dir[0:index]
+print_error = partial(print, file=sys.stderr)
 
-try:
-    current_script_dir = get_current_script_dir()
-    shutil.copy(current_script_dir+"/../airtime-icecast-status.xsl", "/usr/share/icecast2/web")
 
-except Exception, e:
-    print "exception: %s" % e
-    sys.exit(1)
+def assert_superuser():
+    if os.geteuid() != 0:
+        print_error("Please run this as root.")
+        sys.exit(1)
+
+
+def install():
+    """
+    Copy ``airtime-icecast-status.xsl`` from local directory into
+    ``/usr/share/icecast2/web`` directory. This operation requires superuser
+    privileges.
+    """
+
+    assert_superuser()
+    current_script_dir = Path(os.path.dirname(__file__))
+
+    try:
+        shutil.copy(
+            current_script_dir.parent / "airtime-icecast-status.xsl",
+            "/usr/share/icecast2/web",
+        )
+    except Exception as e:
+        print_error("An error occured while installing icecast2: {}".format(e))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    install()
