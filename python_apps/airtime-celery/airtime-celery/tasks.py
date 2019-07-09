@@ -1,19 +1,23 @@
-import os
-import json
-import urllib2
-import requests
-import soundcloud
 import cgi
-import urlparse
+import io
+import json
+import os
 import posixpath
 import shutil
 import tempfile
 import traceback
-import mutagen
-from StringIO import StringIO
-from celery import Celery
-from celery.utils.log import get_task_logger
 from contextlib import closing
+from urllib.parse import urlsplit
+from urllib.request import urlopen
+
+import mutagen
+import requests
+import soundcloud
+
+from celery import Celery, current_task, states
+from celery.utils.log import get_task_logger
+from celery.exceptions import Ignore
+
 
 celery = Celery()
 logger = get_task_logger(__name__)
@@ -32,16 +36,18 @@ def soundcloud_upload(data, token, file_path):
     :rtype: string
     """
     client = soundcloud.Client(access_token=token)
-    # Open the file with urllib2 if it's a cloud file
-    data['asset_data'] = open(file_path, 'rb') if os.path.isfile(file_path) else urllib2.urlopen(file_path)
-    try:
-        logger.info('Uploading track: {0}'.format(data))
-        track = client.post('/tracks', track=data)
-    except Exception as e:
-        logger.info('Error uploading track {title}: {0}'.format(e.message, **data))
-        raise e
-    data['asset_data'].close()
-    return json.dumps(track.fields())
+
+    # Open the file with urllib if it's a cloud file
+    open_function = io.open if os.path.isfile(file_path) else urlopen
+    with open_function(file_path) as fp:
+        data['asset_data'] = fp
+        try:
+            logger.info('Uploading track: %s', data)
+            track = client.post('/tracks', track=data)
+        except Exception as e:
+            logger.info('Error uploading track %s: %s', data['title'], e)
+            raise e
+        return json.dumps(track.fields())
 
 
 @celery.task(name='soundcloud-download', acks_late=True)
@@ -72,9 +78,9 @@ def soundcloud_download(token, callback_url, api_key, track_id):
             obj['fileid'] = f['id']
         else:
             # manually update the task state
-            self.update_state(
-                state = states.FAILURE,
-                meta = 'Track %s is not flagged as downloadable!' % track.title
+            current_task.update_state(
+                state=states.FAILURE,
+                meta='Track %s is not flagged as downloadable!' % track.title
             )
             # ignore the task so no other state is recorded
             raise Ignore()
@@ -146,24 +152,24 @@ def podcast_download(id, url, callback_url, api_key, podcast_name, album_overrid
     """
     # Object to store file IDs, episode IDs, and download status
     # (important if there's an error before the file is posted)
-    obj = { 'episodeid': id }
+    obj = {'episodeid': id}
     try:
         re = None
         with closing(requests.get(url, stream=True)) as r:
             filename = get_filename(r)
-            with tempfile.NamedTemporaryFile(mode ='wb+', delete=False) as audiofile:
+            with tempfile.NamedTemporaryFile(mode='wb+', delete=False) as audiofile:
                 r.raw.decode_content = True
                 shutil.copyfileobj(r.raw, audiofile)
                 # mutagen should be able to guess the write file type
                 metadata_audiofile = mutagen.File(audiofile.name, easy=True)
                 # if for some reason this should fail lets try it as a mp3 specific code
-                if metadata_audiofile == None:
+                if metadata_audiofile is None:
                     # if this happens then mutagen couldn't guess what type of file it is
                     mp3suffix = ("mp3", "MP3", "Mp3", "mP3")
                     # so we treat it like a mp3 if it has a mp3 file extension and hope for the best
                     if filename.endswith(mp3suffix):
                         metadata_audiofile = mutagen.mp3.MP3(audiofile.name, ID3=mutagen.easyid3.EasyID3)
-                #replace track metadata as indicated by album_override setting
+                # replace track metadata as indicated by album_override setting
                 # replace album title as needed
                 metadata_audiofile = podcast_override_metadata(metadata_audiofile, podcast_name, album_override, track_title)
                 metadata_audiofile.save()
@@ -181,6 +187,7 @@ def podcast_download(id, url, callback_url, api_key, podcast_name, album_overrid
         obj['status'] = 0
     return json.dumps(obj)
 
+
 def podcast_override_metadata(m, podcast_name, override, track_title):
     """
     Override m['album'] if empty or forced with override arg
@@ -196,9 +203,10 @@ def podcast_override_metadata(m, podcast_name, override, track_title):
         try:
             m['album']
         except KeyError:
-           logger.debug('setting new album name to {0} in podcast'.format(podcast_name.encode('ascii', 'ignore')))
-           m['album'] = podcast_name
+            logger.debug('setting new album name to {0} in podcast'.format(podcast_name.encode('ascii', 'ignore')))
+            m['album'] = podcast_name
     return m
+
 
 def get_filename(r):
     """
@@ -217,12 +225,12 @@ def get_filename(r):
         try:
             _, params = cgi.parse_header(d)
             filename = params['filename']
-        except Exception as e:
+        except Exception:
             # We end up here if we get a Content-Disposition header with no filename
             logger.warn("Couldn't find file name in Content-Disposition header, using url")
     if not filename:
         # Since we don't necessarily get the filename back in the response headers,
         # parse the URL and get the filename and extension
-        path = urlparse.urlsplit(r.url).path
+        path = urlsplit(r.url).path
         filename = posixpath.basename(path)
     return filename

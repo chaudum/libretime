@@ -1,6 +1,8 @@
 import os
-from configobj import ConfigObj
+
 from kombu import Exchange, Queue
+
+from configobj import ConfigObj
 
 # Get the broker string from airtime.conf
 RMQ_CONFIG_SECTION = "rabbitmq"
@@ -14,12 +16,13 @@ def get_rmq_broker():
 
 def parse_rmq_config(rmq_config):
     return {
-        'host'    : rmq_config[RMQ_CONFIG_SECTION]['host'],
-        'port'    : rmq_config[RMQ_CONFIG_SECTION]['port'],
+        'host': rmq_config[RMQ_CONFIG_SECTION]['host'],
+        'port': rmq_config[RMQ_CONFIG_SECTION]['port'],
         'username': rmq_config[RMQ_CONFIG_SECTION]['user'],
         'password': rmq_config[RMQ_CONFIG_SECTION]['password'],
-        'vhost'   : rmq_config[RMQ_CONFIG_SECTION]['vhost']
+        'vhost': rmq_config[RMQ_CONFIG_SECTION]['vhost']
     }
+
 
 # Celery amqp settings
 BROKER_URL = get_rmq_broker()
