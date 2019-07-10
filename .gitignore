@@ -16,3 +16,7 @@ airtime_mvc/tests/log/*.log
 .vagrant/
 .DS_Store
 .idea/
+*.py[co]
+__pycache__/
+.mypy_cache/
+python_apps/*/env/
