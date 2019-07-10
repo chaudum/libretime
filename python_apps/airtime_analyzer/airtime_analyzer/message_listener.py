@@ -4,8 +4,8 @@ import json
 import time
 import select
 import signal
-import logging 
-import multiprocessing 
+import logging
+import multiprocessing
 import Queue
 from analyzer_pipeline import AnalyzerPipeline
 from status_reporter import StatusReporter
@@ -53,20 +53,22 @@ QUEUE = "airtime-uploads"
     So that is a quick overview of the design constraints for this application, and
     why airtime_analyzer is written this way.
 """
+
+
 class MessageListener:
 
     def __init__(self, rmq_config):
         ''' Start listening for file upload notification messages
             from RabbitMQ
-            
+
             Keyword arguments:
                 rmq_config: A ConfigParser object containing the [rabbitmq] configuration.
         '''
-    
+
         self._shutdown = False
 
         # Read the RabbitMQ connection settings from the rmq_config file
-        # The exceptions throw here by default give good error messages. 
+        # The exceptions throw here by default give good error messages.
         RMQ_CONFIG_SECTION = "rabbitmq"
         self._host = rmq_config.get(RMQ_CONFIG_SECTION, 'host')
         self._port = rmq_config.getint(RMQ_CONFIG_SECTION, 'port')
@@ -75,7 +77,7 @@ class MessageListener:
         self._vhost = rmq_config.get(RMQ_CONFIG_SECTION, 'vhost')
 
         # Set up a signal handler so we can shutdown gracefully
-        # For some reason, this signal handler must be set up here. I'd rather 
+        # For some reason, this signal handler must be set up here. I'd rather
         # put it in AirtimeAnalyzerServer, but it doesn't work there (something to do
         # with pika's SIGTERM handler interfering with it, I think...)
         signal.signal(signal.SIGTERM, self.graceful_shutdown)
@@ -85,9 +87,9 @@ class MessageListener:
                 self.connect_to_messaging_server()
                 self.wait_for_messages()
             except (KeyboardInterrupt, SystemExit):
-                break # Break out of the while loop and exit the application
+                break  # Break out of the while loop and exit the application
             except select.error:
-                pass 
+                pass
             except pika.exceptions.AMQPError as e:
                 if self._shutdown:
                     break
@@ -99,18 +101,19 @@ class MessageListener:
         self.disconnect_from_messaging_server()
         logging.info("Exiting cleanly.")
 
-
     def connect_to_messaging_server(self):
         '''Connect to the RabbitMQ server and start listening for messages.'''
-        self._connection = pika.BlockingConnection(pika.ConnectionParameters(host=self._host, 
-            port=self._port, virtual_host=self._vhost, 
-            credentials=pika.credentials.PlainCredentials(self._username, self._password)))
+        self._connection = pika.BlockingConnection(pika.ConnectionParameters(host=self._host,
+                                                                             port=self._port, virtual_host=self._vhost,
+                                                                             credentials=pika.credentials.PlainCredentials(self._username, self._password)))
         self._channel = self._connection.channel()
-        self._channel.exchange_declare(exchange=EXCHANGE, exchange_type=EXCHANGE_TYPE, durable=True)
+        self._channel.exchange_declare(
+            exchange=EXCHANGE, exchange_type=EXCHANGE_TYPE, durable=True)
         result = self._channel.queue_declare(queue=QUEUE, durable=True)
 
-        self._channel.queue_bind(exchange=EXCHANGE, queue=QUEUE, routing_key=ROUTING_KEY)
-         
+        self._channel.queue_bind(exchange=EXCHANGE, queue=QUEUE,
+                                 routing_key=ROUTING_KEY)
+
         logging.info(" Listening for messages...")
         self._channel.basic_consume(self.msg_received_callback,
                                     queue=QUEUE, no_ack=False)
@@ -128,7 +131,7 @@ class MessageListener:
             self._channel.stop_consuming()
         if not self._connection.is_closed and not self._connection.is_closing:
             self._connection.close()
-   
+
     def graceful_shutdown(self, signum, frame):
         '''Disconnect and break out of the message listening loop'''
         self._shutdown = True
@@ -136,19 +139,20 @@ class MessageListener:
 
     def msg_received_callback(self, channel, method_frame, header_frame, body):
         ''' A callback method that runs when a RabbitMQ message is received. 
-        
+
             Here we parse the message, spin up an analyzer process, and report the 
             metadata back to the Airtime web application (or report an error).
-        ''' 
-        logging.info(" - Received '%s' on routing_key '%s'" % (body, method_frame.routing_key))
-        
-        #Declare all variables here so they exist in the exception handlers below, no matter what.
+        '''
+        logging.info(" - Received '%s' on routing_key '%s'" %
+                     (body, method_frame.routing_key))
+
+        # Declare all variables here so they exist in the exception handlers below, no matter what.
         audio_file_path = ""
         #final_file_path = ""
         import_directory = ""
         original_filename = ""
-        callback_url    = ""
-        api_key         = ""
+        callback_url = ""
+        api_key = ""
         file_prefix = ""
 
         ''' Spin up a worker process. We use the multiprocessing module and multiprocessing.Queue 
@@ -159,8 +163,8 @@ class MessageListener:
         '''
         try:
             msg_dict = json.loads(body)
-            api_key         = msg_dict["api_key"]
-            callback_url    = msg_dict["callback_url"]
+            api_key = msg_dict["api_key"]
+            callback_url = msg_dict["callback_url"]
 
             audio_file_path = msg_dict["tmp_file_path"]
             import_directory = msg_dict["import_directory"]
@@ -168,16 +172,19 @@ class MessageListener:
             file_prefix = msg_dict["file_prefix"]
             storage_backend = msg_dict["storage_backend"]
 
-            audio_metadata = MessageListener.spawn_analyzer_process(audio_file_path, import_directory, original_filename, storage_backend, file_prefix)
-            StatusReporter.report_success_to_callback_url(callback_url, api_key, audio_metadata)
+            audio_metadata = MessageListener.spawn_analyzer_process(
+                audio_file_path, import_directory, original_filename, storage_backend, file_prefix)
+            StatusReporter.report_success_to_callback_url(
+                callback_url, api_key, audio_metadata)
 
         except KeyError as e:
             # A field in msg_dict that we needed was missing (eg. audio_file_path)
-            logging.exception("A mandatory airtime_analyzer message field was missing from the message.")
+            logging.exception(
+                "A mandatory airtime_analyzer message field was missing from the message.")
             # See the huge comment about NACK below.
             channel.basic_nack(delivery_tag=method_frame.delivery_tag, multiple=False,
-                               requeue=False) #Important that it doesn't requeue the message
-        
+                               requeue=False)  # Important that it doesn't requeue the message
+
         except Exception as e:
             logging.exception(e)
             ''' If ANY exception happens while processing a file, we're going to NACK to the 
@@ -189,23 +196,22 @@ class MessageListener:
                 here from any catastrophic or genuinely unexpected errors:
             '''
             channel.basic_nack(delivery_tag=method_frame.delivery_tag, multiple=False,
-                               requeue=False) #Important that it doesn't requeue the message
+                               requeue=False)  # Important that it doesn't requeue the message
 
             #
-            # TODO: If the JSON was invalid or the web server is down, 
+            # TODO: If the JSON was invalid or the web server is down,
             #       then don't report that failure to the REST API
-            #TODO: Catch exceptions from this HTTP request too:
-            if callback_url: # If we got an invalid message, there might be no callback_url in the JSON
+            # TODO: Catch exceptions from this HTTP request too:
+            if callback_url:  # If we got an invalid message, there might be no callback_url in the JSON
                 # Report this as a failed upload to the File Upload REST API.
                 StatusReporter.report_failure_to_callback_url(callback_url, api_key, import_status=2,
                                                               reason=u'An error occurred while importing this file')
-            
 
         else:
             # ACK at the very end, after the message has been successfully processed.
             # If we don't ack, then RabbitMQ will redeliver the message in the future.
             channel.basic_ack(delivery_tag=method_frame.delivery_tag)
-    
+
     @staticmethod
     def spawn_analyzer_process(audio_file_path, import_directory, original_filename, storage_backend, file_prefix):
         ''' Spawn a child process to analyze and import a new audio file. '''
@@ -226,7 +232,8 @@ class MessageListener:
 
         q = Queue.Queue()
         try:
-            AnalyzerPipeline.run_analysis(q, audio_file_path, import_directory, original_filename, storage_backend, file_prefix)
+            AnalyzerPipeline.run_analysis(
+                q, audio_file_path, import_directory, original_filename, storage_backend, file_prefix)
             metadata = q.get()
         except Exception as e:
             logging.error("Analyzer pipeline exception: %s" % str(e))
@@ -237,4 +244,3 @@ class MessageListener:
             q.get()
 
         return metadata
-

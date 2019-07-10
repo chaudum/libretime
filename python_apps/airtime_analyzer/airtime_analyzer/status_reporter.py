@@ -6,13 +6,14 @@ import Queue
 import time
 import traceback
 import pickle
-import threading 
+import threading
 from urlparse import urlparse
 
 # Disable urllib3 warnings because these can cause a rare deadlock due to Python 2's crappy internal non-reentrant locking
 # around POSIX stuff. See SAAS-714. The hasattr() is for compatibility with older versions of requests.
 if hasattr(requests, 'packages'):
     requests.packages.urllib3.disable_warnings()
+
 
 class PicklableHttpRequest:
     def __init__(self, method, url, data, api_key):
@@ -24,6 +25,7 @@ class PicklableHttpRequest:
     def create_request(self):
         return requests.Request(method=self.method, url=self.url, data=self.data,
                                 auth=requests.auth.HTTPBasicAuth(self.api_key, ''))
+
 
 def process_http_requests(ipc_queue, http_retry_queue_path):
     ''' Runs in a separate thread and performs all the HTTP requests where we're
@@ -63,11 +65,12 @@ def process_http_requests(ipc_queue, http_retry_queue_path):
             while not shutdown:
                 try:
                     request = ipc_queue.get(block=True, timeout=5)
-                    if isinstance(request, str) and request == "shutdown": # Bit of a cheat
+                    if isinstance(request, str) and request == "shutdown":  # Bit of a cheat
                         shutdown = True
                         break
                     if not isinstance(request, PicklableHttpRequest):
-                        raise TypeError("request must be a PicklableHttpRequest. Was of type " + type(request).__name__)
+                        raise TypeError(
+                            "request must be a PicklableHttpRequest. Was of type " + type(request).__name__)
                 except Queue.Empty:
                     request = None
 
@@ -87,29 +90,34 @@ def process_http_requests(ipc_queue, http_retry_queue_path):
             with open(http_retry_queue_path, 'wb') as pickle_file:
                 pickle.dump(retry_queue, pickle_file)
             return
-        except Exception as e: # Terrible top-level exception handler to prevent the thread from dying, just in case.
+        # Terrible top-level exception handler to prevent the thread from dying, just in case.
+        except Exception as e:
             if shutdown:
                 return
             logging.exception("Unhandled exception in StatusReporter")
             logging.exception(e)
             logging.info("Restarting StatusReporter thread")
-            time.sleep(2) # Throttle it
+            time.sleep(2)  # Throttle it
 
 
 def send_http_request(picklable_request, retry_queue):
     if not isinstance(picklable_request, PicklableHttpRequest):
-        raise TypeError("picklable_request must be a PicklableHttpRequest. Was of type " + type(picklable_request).__name__)
-    try: 
+        raise TypeError(
+            "picklable_request must be a PicklableHttpRequest. Was of type " + type(picklable_request).__name__)
+    try:
         bare_request = picklable_request.create_request()
         s = requests.Session()
         prepared_request = s.prepare_request(bare_request)
-        r = s.send(prepared_request, timeout=StatusReporter._HTTP_REQUEST_TIMEOUT, verify=False) # SNI is a pain in the ass
-        r.raise_for_status() # Raise an exception if there was an http error code returned
+        # SNI is a pain in the ass
+        r = s.send(prepared_request,
+                   timeout=StatusReporter._HTTP_REQUEST_TIMEOUT, verify=False)
+        r.raise_for_status()  # Raise an exception if there was an http error code returned
         logging.info("HTTP request sent successfully.")
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 422:
             # Do no retry the request if there was a metadata validation error
-            logging.error("HTTP request failed due to an HTTP exception. Exception was: %s" % str(e))
+            logging.error(
+                "HTTP request failed due to an HTTP exception. Exception was: %s" % str(e))
         else:
             # The request failed with an error 500 probably, so let's check if Airtime and/or
             # the web server are broken. If not, then our request was probably causing an
@@ -123,8 +131,9 @@ def send_http_request(picklable_request, retry_queue):
                 # You will have to find these bad requests in logs or you'll be
                 # notified by sentry.
     except requests.exceptions.ConnectionError as e:
-        logging.error("HTTP request failed due to a connection error. Retrying later. %s" % str(e))
-        retry_queue.append(picklable_request) # Retry it later
+        logging.error(
+            "HTTP request failed due to a connection error. Retrying later. %s" % str(e))
+        retry_queue.append(picklable_request)  # Retry it later
     except Exception as e:
         logging.error("HTTP request failed with unhandled exception. %s" % str(e))
         logging.error(traceback.format_exc())
@@ -132,6 +141,7 @@ def send_http_request(picklable_request, retry_queue):
         # I'm doing this to protect against us getting some pathological request
         # that breaks our code. I don't want us pickling data that potentially
         # breaks airtime_analyzer.
+
 
 def is_web_server_broken(url):
     ''' Do a naive test to check if the web server we're trying to access is down.
@@ -146,7 +156,7 @@ def is_web_server_broken(url):
         return True
     else:
         # The request worked fine, so the web server and Airtime are still up.
-        return False 
+        return False
     return False
 
 
@@ -155,26 +165,26 @@ class StatusReporter():
         Airtime web application.
     '''
     _HTTP_REQUEST_TIMEOUT = 30
-    
+
     ''' We use multiprocessing.Process again here because we need a thread for this stuff
         anyways, and Python gives us process isolation for free (crash safety).
     '''
     _ipc_queue = Queue.Queue()
-    #_http_thread = multiprocessing.Process(target=process_http_requests,
+    # _http_thread = multiprocessing.Process(target=process_http_requests,
     #                        args=(_ipc_queue,))
     _http_thread = None
 
     @classmethod
     def start_thread(self, http_retry_queue_path):
         StatusReporter._http_thread = threading.Thread(target=process_http_requests,
-                                args=(StatusReporter._ipc_queue,http_retry_queue_path))
+                                                       args=(StatusReporter._ipc_queue, http_retry_queue_path))
         StatusReporter._http_thread.start()
 
     @classmethod
     def stop_thread(self):
         logging.info("Terminating status_reporter process")
-        #StatusReporter._http_thread.terminate() # Triggers SIGTERM on the child process
-        StatusReporter._ipc_queue.put("shutdown") # Special trigger
+        # StatusReporter._http_thread.terminate() # Triggers SIGTERM on the child process
+        StatusReporter._ipc_queue.put("shutdown")  # Special trigger
         StatusReporter._http_thread.join()
 
     @classmethod
@@ -187,7 +197,7 @@ class StatusReporter():
             to the callback URL (which should be the Airtime File Upload API)
         '''
         put_payload = json.dumps(audio_metadata)
-        #r = requests.Request(method='PUT', url=callback_url, data=put_payload, 
+        # r = requests.Request(method='PUT', url=callback_url, data=put_payload,
         #                     auth=requests.auth.HTTPBasicAuth(api_key, ''))
         '''
         r = requests.Request(method='PUT', url=callback_url, data=put_payload, 
@@ -196,8 +206,8 @@ class StatusReporter():
         StatusReporter._send_http_request(r)
         '''
 
-        StatusReporter._send_http_request(PicklableHttpRequest(method='PUT', url=callback_url, 
-                                            data=put_payload, api_key=api_key))
+        StatusReporter._send_http_request(PicklableHttpRequest(method='PUT', url=callback_url,
+                                                               data=put_payload, api_key=api_key))
 
         '''
         try:
@@ -222,8 +232,9 @@ class StatusReporter():
 
     @classmethod
     def report_failure_to_callback_url(self, callback_url, api_key, import_status, reason):
-        if not isinstance(import_status, (int, long) ):
-            raise TypeError("import_status must be an integer. Was of type " + type(import_status).__name__)
+        if not isinstance(import_status, (int, long)):
+            raise TypeError(
+                "import_status must be an integer. Was of type " + type(import_status).__name__)
 
         logging.debug("Reporting import failure to Airtime REST API...")
         audio_metadata = dict()
@@ -236,8 +247,8 @@ class StatusReporter():
                          auth=requests.auth.HTTPBasicAuth(api_key, ''),
                          timeout=StatusReporter._HTTP_REQUEST_TIMEOUT)
         '''
-        StatusReporter._send_http_request(PicklableHttpRequest(method='PUT', url=callback_url, 
-                                          data=put_payload, api_key=api_key))
+        StatusReporter._send_http_request(PicklableHttpRequest(method='PUT', url=callback_url,
+                                                               data=put_payload, api_key=api_key))
         '''
         logging.debug("HTTP request returned status: " + str(r.status_code))
         logging.debug(r.text) # log the response body
@@ -245,4 +256,3 @@ class StatusReporter():
         #TODO: queue up failed requests and try them again later.
         r.raise_for_status() # raise an exception if there was an http error code returned
         '''
-
